@@ -1,0 +1,13 @@
+
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "boto-azul-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-27",
+  "r2_buckets": [
+    {
+      "binding": "BOOKS_BUCKET",
+      "bucket_name": "boto-azul-books"
+    }
+  ]
+}
