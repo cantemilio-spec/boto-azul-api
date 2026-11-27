@@ -16,40 +16,30 @@ function json(data, status = 200) {
 function parseRange(value, size) {
   if (!value || !/^bytes=\d*-\d*$/.test(value)) return null;
 
-  const [startText, endText] = value.slice(6).split("-");
-  let start;
-  let end;
+  const [a, b] = value.slice(6).split("-");
+  let start, end;
 
-  if (startText === "") {
-    const suffix = Number(endText);
-
-    if (!Number.isSafeInteger(suffix) || suffix <= 0) {
+  if (a === "") {
+    const suffix = Number(b);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0)
       return { invalid: true };
-    }
 
     start = Math.max(0, size - suffix);
     end = size - 1;
   } else {
-    start = Number(startText);
-    end = endText === "" ? size - 1 : Number(endText);
+    start = Number(a);
+    end = b === "" ? size - 1 : Number(b);
   }
 
   if (
     !Number.isSafeInteger(start) ||
     !Number.isSafeInteger(end) ||
-    start < 0 ||
-    end < start ||
-    start >= size
-  ) {
-    return { invalid: true };
-  }
+    start < 0 || end < start || start >= size
+  ) return { invalid: true };
 
   end = Math.min(end, size - 1);
 
-  return {
-    offset: start,
-    length: end - start + 1
-  };
+  return { offset: start, length: end - start + 1 };
 }
 
 export default {
@@ -57,12 +47,8 @@ export default {
     const url = new URL(request.url);
     const method = request.method;
 
-    if (method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: CORS
-      });
-    }
+    if (method === "OPTIONS")
+      return new Response(null, { status: 204, headers: CORS });
 
     if (url.pathname === "/health" && method === "GET") {
       return json({
@@ -73,84 +59,69 @@ export default {
       });
     }
 
-    if (method !== "GET" && method !== "HEAD") {
+    if (method !== "GET" && method !== "HEAD")
       return json({ error: "Method not allowed" }, 405);
-    }
+
+    if (!env.BOOKS_BUCKET)
+      return json({ error: "Storage unavailable" }, 503);
 
     if (url.pathname === "/api/books" && method === "GET") {
-      const books = Object.entries(PUBLIC_BOOKS).map(
-        ([id, book]) => ({
-          id,
-          title: book.title,
-          author: book.author || "",
-          format: book.format,
-          size: book.size || null,
-          cover: book.cover || null
+      const entries = await Promise.all(
+        Object.entries(PUBLIC_BOOKS).map(async ([id, book]) => {
+          const object = await env.BOOKS_BUCKET.head(book.key);
+          if (!object) return null;
+
+          return {
+            id,
+            title: book.title,
+            author: book.author || "",
+            format: book.format,
+            size: object.size,
+            cover: book.cover || null
+          };
         })
       );
 
-      return json({ books });
+      return json({ books: entries.filter(Boolean) });
     }
 
     const match = url.pathname.match(
       /^\/api\/book\/([a-zA-Z0-9_-]+)$/
     );
 
-    if (!match) {
+    if (!match)
       return json({ error: "Not found" }, 404);
-    }
 
     const book = PUBLIC_BOOKS[match[1]];
 
-    if (!book) {
+    if (!book)
       return json({ error: "Book not found" }, 404);
-    }
 
-    if (!env.BOOKS_BUCKET) {
-      return json({ error: "Storage unavailable" }, 503);
-    }
+    const metadata = await env.BOOKS_BUCKET.head(book.key);
 
+    if (!metadata)
+      return json({ error: "Book file not found" }, 404);
+
+    const size = metadata.size;
     const rangeHeader = request.headers.get("Range");
-    const size = book.size;
-
-    if (!Number.isSafeInteger(size) || size <= 0) {
-      return json({ error: "Invalid book configuration" }, 500);
-    }
-
-    const range = rangeHeader
-      ? parseRange(rangeHeader, size)
-      : null;
+    const range = rangeHeader ? parseRange(rangeHeader, size) : null;
 
     if (range?.invalid) {
       const headers = new Headers(CORS);
       headers.set("Content-Range", `bytes */${size}`);
-
-      return new Response(null, {
-        status: 416,
-        headers
-      });
+      return new Response(null, { status: 416, headers });
     }
 
     const options = range
-      ? {
-          range: {
-            offset: range.offset,
-            length: range.length
-          }
-        }
+      ? { range: { offset: range.offset, length: range.length } }
       : undefined;
 
-    const object = await env.BOOKS_BUCKET.get(
-      book.key,
-      options
-    );
+    const object = await env.BOOKS_BUCKET.get(book.key, options);
 
-    if (!object) {
+    if (!object)
       return json({ error: "Book file not found" }, 404);
-    }
 
     const headers = new Headers(CORS);
-
     headers.set("Content-Type", book.contentType);
     headers.set("Content-Disposition", "inline");
     headers.set("Accept-Ranges", "bytes");
@@ -162,26 +133,19 @@ export default {
         "Content-Range",
         `bytes ${range.offset}-${range.offset + range.length - 1}/${size}`
       );
-
       headers.set("Content-Length", String(range.length));
 
-      return new Response(
-        method === "HEAD" ? null : object.body,
-        {
-          status: 206,
-          headers
-        }
-      );
+      return new Response(method === "HEAD" ? null : object.body, {
+        status: 206,
+        headers
+      });
     }
 
     headers.set("Content-Length", String(size));
 
-    return new Response(
-      method === "HEAD" ? null : object.body,
-      {
-        status: 200,
-        headers
-      }
-    );
+    return new Response(method === "HEAD" ? null : object.body, {
+      status: 200,
+      headers
+    });
   }
 };
