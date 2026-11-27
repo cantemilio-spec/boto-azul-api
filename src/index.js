@@ -36,7 +36,8 @@ function decodeId(id) {
 }
 
 async function getCatalog(env) {
-  const object = await env.BOOKS_BUCKET.get(CATALOG_KEY);
+  const object = const object = await env.BOOKS_BUCKET.head(book.key);
+if (!object) console.log("ARQUIVO NÃO ENCONTRADO:", book.key);
 
   if (!object) throw new Error("Catálogo não encontrado no R2");
 
